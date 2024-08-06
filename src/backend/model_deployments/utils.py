@@ -7,7 +7,7 @@ from backend.database_models import (
 
 
 def class_name_validator(v: str):
-    from backend.model_deployments.utils import get_module_class
+    from backend.services.get_module_class import get_module_class
 
     deployment_class = get_module_class(DEFAULT_MODEL_DEPLOYMENTS_MODULE, v)
     if not deployment_class:

@@ -9,9 +9,11 @@ from backend.crud import agent as agent_crud
 from backend.crud import conversation as conversation_crud
 from backend.crud import deployment as deployment_crud
 from backend.crud import organization as organization_crud
+from backend.crud import tool as tool_crud
 from backend.database_models.database import DBSessionDep
 from backend.model_deployments.utils import class_name_validator
 from backend.services.auth.utils import get_header_user_id
+from backend.services.tool import validate_implementation_class_name
 
 
 def validate_deployment_model(deployment: str, model: str, session: DBSessionDep):
@@ -27,6 +29,12 @@ def validate_deployment_model(deployment: str, model: str, session: DBSessionDep
         HTTPException: If the deployment and model are not compatible
 
     """
+    # TODO Eugene: Discuss with Scott update request send deployment,model objects instead of name
+    if isinstance(deployment, dict):
+        deployment = deployment.get("name")
+    if isinstance(model, dict):
+        model = model.get("name")
+
     deployment_db = deployment_crud.get_deployment_by_name(session, deployment)
     if not deployment_db:
         deployment_db = deployment_crud.get_deployment(session, deployment)
@@ -128,6 +136,27 @@ def validate_deployment_header(request: Request, session: DBSessionDep):
                 status_code=404,
                 detail=f"Deployment {deployment_name} was not found, or is not available.",
             )
+
+
+def validate_tools(session: DBSessionDep, tools: list[str]):
+    """
+    Validate that the request has the appropriate tools in the body
+
+    Args:
+        request (Request): The request to validate
+
+    Raises:
+        HTTPException: If the request does not have the appropriate tools in the body
+    """
+    tools_db = tool_crud.get_available_tools(session)
+    tools_db_names = [tool.name for tool in tools_db]
+    for tool in tools:
+        if tools_db_names:
+            if tool not in tools_db_names:
+                if tool not in AVAILABLE_TOOLS:
+                    raise HTTPException(
+                        status_code=400, detail=f"Tool {tool} not found."
+                    )
 
 
 async def validate_chat_request(session: DBSessionDep, request: Request):
@@ -242,9 +271,7 @@ async def validate_create_agent_request(session: DBSessionDep, request: Request)
     # Validate tools
     tools = body.get("tools")
     if tools:
-        for tool in tools:
-            if tool not in AVAILABLE_TOOLS:
-                raise HTTPException(status_code=400, detail=f"Tool {tool} not found.")
+        validate_tools(session, tools)
 
     name = body.get("name")
     model = body.get("model")
@@ -289,9 +316,7 @@ async def validate_update_agent_request(session: DBSessionDep, request: Request)
     # Validate tools
     tools = body.get("tools")
     if tools:
-        for tool in tools:
-            if tool not in AVAILABLE_TOOLS:
-                raise HTTPException(status_code=400, detail=f"Tool {tool} not found.")
+        validate_tools(session, tools)
 
     model, deployment = body.get("model"), body.get("deployment")
     # Model and deployment must be updated together to ensure compatibility
@@ -363,6 +388,57 @@ async def validate_create_deployment_request(session: DBSessionDep, request: Req
             status_code=400,
             detail=f"Deployment class name {deployment_class_name} not found.",
         )
+
+
+async def validate_create_tool_request(session: DBSessionDep, request: Request):
+    """
+    Validate that the create tool request is valid.
+
+    Args:
+        request (Request): The request to validate
+
+    Raises:
+        HTTPException: If the request does not have the appropriate values in the body
+    """
+    # TODO Eugene: Add config validation, and may be add a check for the query params
+    body = await request.json()
+    name = body.get("name")
+    tool = tool_crud.get_tool_by_name(session, name)
+    if tool:
+        raise HTTPException(status_code=400, detail=f"Tool {name} already exists.")
+
+    implementation_class_name = body.get("implementation_class_name")
+    if implementation_class_name:
+        validate_implementation_class_name(implementation_class_name)
+
+    auth_implementation_class_name = body.get("auth_implementation_class_name")
+    if auth_implementation_class_name:
+        validate_implementation_class_name(auth_implementation_class_name)
+
+
+async def validate_update_tool_request(session: DBSessionDep, request: Request):
+    """
+    Validate that the create tool request is valid.
+
+    Args:
+        request (Request): The request to validate
+
+    Raises:
+        HTTPException: If the request does not have the appropriate values in the body
+    """
+    body = await request.json()
+    tool_id = request.path_params.get("tool_id")
+    tool = tool_crud.get_tool(session, tool_id)
+    if not tool:
+        raise HTTPException(status_code=400, detail=f"Tool {tool_id} not found.")
+
+    implementation_class_name = body.get("implementation_class_name")
+    if implementation_class_name:
+        validate_implementation_class_name(implementation_class_name)
+
+    auth_implementation_class_name = body.get("auth_implementation_class_name")
+    if auth_implementation_class_name:
+        validate_implementation_class_name(auth_implementation_class_name)
 
 
 async def validate_organization_request(session: DBSessionDep, request: Request):

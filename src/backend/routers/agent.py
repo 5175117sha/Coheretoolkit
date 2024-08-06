@@ -3,12 +3,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.config.routers import RouterName
 from backend.crud import agent as agent_crud
 from backend.crud import agent_tool_metadata as agent_tool_metadata_crud
+from backend.crud import tool as tool_crud
 from backend.database_models.agent import Agent as AgentModel
 from backend.database_models.agent_tool_metadata import (
     AgentToolMetadata as AgentToolMetadataModel,
 )
 from backend.database_models.database import DBSessionDep
-from backend.routers.utils import get_deployment_model_from_agent
+from backend.routers.utils import get_deployment_model_from_agent, get_tools_from_agent
 from backend.schemas.agent import (
     Agent,
     AgentPublic,
@@ -84,16 +85,34 @@ async def create_agent(
         temperature=agent.temperature,
         user_id=user_id,
         organization_id=agent.organization_id,
-        tools=agent.tools,
     )
     deployment_db, model_db = get_deployment_model_from_agent(agent, session)
+    tools_db = get_tools_from_agent(agent, session)
     try:
         created_agent = agent_crud.create_agent(session, agent_data)
 
         if agent.tools_metadata:
             for tool_metadata in agent.tools_metadata:
-                await update_or_create_tool_metadata(
-                    created_agent, tool_metadata, session, ctx
+                if tool_metadata.tool_name:
+                    tool = tool_crud.get_tool_by_name(session, tool_metadata.tool_name)
+                    if not tool:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Tool with name: {tool_metadata.tool_name} not found.",
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Tool name is required for tool metadata.",
+                    )
+                agent_tool_metadata_data = AgentToolMetadataModel(
+                    user_id=user_id,
+                    agent_id=created_agent.id,
+                    tool_id=tool.id,
+                    artifacts=tool_metadata.artifacts,
+                )
+                agent_tool_metadata_crud.create_agent_tool_metadata(
+                    session, agent_tool_metadata_data
                 )
         if deployment_db and model_db:
             deployment_config = (
@@ -109,6 +128,11 @@ async def create_agent(
                 deployment_config=deployment_config,
                 set_default=True,
             )
+        if tools_db:
+            for tool in tools_db:
+                tool_crud.assign_tool_to_agent(
+                    session, tool, created_agent, tool.default_tool_config
+                )
 
         agent_schema = Agent.model_validate(created_agent)
         ctx.with_agent(agent_schema)
@@ -116,6 +140,7 @@ async def create_agent(
 
         return created_agent
     except Exception as e:
+        session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -270,7 +295,7 @@ async def get_agent_by_id(
     ctx.with_agent(agent_schema)
     ctx.with_metrics_agent(agent_to_metrics_agent(agent))
 
-    return agent
+    return Agent.custom_transform(agent)
 
 
 @router.get("/{agent_id}/deployments", response_model=list[DeploymentSchema])
@@ -346,6 +371,7 @@ async def update_agent(
 
     try:
         db_deployment, db_model = get_deployment_model_from_agent(new_agent, session)
+        tools_db = get_tools_from_agent(new_agent, session)
         deployment_config = new_agent.deployment_config
         is_default_deployment = new_agent.is_default_deployment
         # remove association fields
@@ -356,6 +382,7 @@ async def update_agent(
                 "deployment_config",
                 "is_default_deployment",
                 "is_default_model",
+                "tools",
             }
         )
         # TODO Eugene - if no deployment or model is provide or if the deployment or model is not found, should we raise an error?
@@ -396,6 +423,13 @@ async def update_agent(
         agent = agent_crud.update_agent(
             session, agent, UpdateAgentRequest(**new_agent_cleaned)
         )
+        if tools_db:
+            tool_crud.remove_all_tools_from_agent(session, agent)
+            for tool in tools_db:
+                tool_crud.assign_tool_to_agent(
+                    session, tool, agent, tool.default_tool_config
+                )
+
         agent_schema = Agent.model_validate(agent)
         ctx.with_agent(agent_schema)
         ctx.with_metrics_agent(agent_to_metrics_agent(agent))
@@ -423,9 +457,11 @@ async def handle_tool_metadata_update(
         Agent: Agent.
     """
     # Delete tool metadata that are not in the request
-    new_tools_names = [metadata.tool_name for metadata in new_agent.tools_metadata]
+    new_tools_ids = [
+        metadata.id for metadata in new_agent.tools_metadata if metadata.id
+    ]
     for tool_metadata in agent.tools_metadata:
-        if tool_metadata.tool_name not in new_tools_names:
+        if tool_metadata.id not in new_tools_ids:
             agent_tool_metadata_crud.delete_agent_tool_metadata_by_id(
                 session, tool_metadata.id
             )
@@ -567,7 +603,7 @@ def create_agent_tool_metadata(
     agent_tool_metadata_data = AgentToolMetadataModel(
         user_id=user_id,
         agent_id=agent_id,
-        tool_name=agent_tool_metadata.tool_name,
+        tool_id=agent_tool_metadata.tool_id,
         artifacts=agent_tool_metadata.artifacts,
     )
 

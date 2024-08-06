@@ -32,6 +32,19 @@ class AgentDeploymentModel(Base):
     )
 
 
+class AgentTool(Base):
+    __tablename__ = "agent_tool"
+
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"))
+    tool_id: Mapped[str] = mapped_column(ForeignKey("tools.id", ondelete="CASCADE"))
+    tool_config: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    agent = relationship("Agent", back_populates="agent_tool_associations")
+    tool = relationship("Tool", back_populates="agent_tool_associations")
+
+    __table_args__ = (UniqueConstraint("agent_id", "tool_id", name="agent_tool_uc"),)
+
+
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -41,8 +54,9 @@ class Agent(Base):
     preamble: Mapped[str] = mapped_column(Text, default="", nullable=False)
     temperature: Mapped[float] = mapped_column(Float, default=0.3, nullable=False)
 
-    tools: Mapped[list[str]] = mapped_column(JSON, default=[], nullable=False)
-    tools_metadata: Mapped[list[AgentToolMetadata]] = relationship("AgentToolMetadata")
+    tools_metadata: Mapped[list[AgentToolMetadata]] = relationship(
+        "AgentToolMetadata", back_populates="agent"
+    )
 
     user_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("users.id", name="agents_user_id_fkey", ondelete="CASCADE")
@@ -65,9 +79,18 @@ class Agent(Base):
         back_populates="agents",
         overlaps="deployments,models,agents,agent,agent_deployment_associations,model",
     )
+    associated_tools = relationship(
+        "Tool",
+        secondary="agent_tool",
+        back_populates="agents",
+        overlaps="tools,agents,agent,agent_tool_associations,tool",
+    )
+
     agent_deployment_associations = relationship(
         "AgentDeploymentModel", back_populates="agent"
     )
+
+    agent_tool_associations = relationship("AgentTool", back_populates="agent")
 
     user = relationship("User", back_populates="agents")
     # TODO Eugene  - add the composite index here if needed
@@ -137,6 +160,10 @@ class Agent(Base):
         return (
             default_model_association.model.name if default_model_association else None
         )
+
+    @property
+    def tools(self):
+        return [associated_tool.name for associated_tool in self.associated_tools]
 
     def set_default_agent_deployment_model(self, deployment_id: str, model_id: str):
         default_model_deployment = next(

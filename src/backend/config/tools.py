@@ -1,3 +1,4 @@
+import copy
 from enum import StrEnum
 
 from backend.config.settings import Settings
@@ -195,13 +196,14 @@ def get_available_tools() -> dict[ToolName, dict]:
             key: value for key, value in ALL_TOOLS.items() if key in langchain_tools
         }
 
-    tools = ALL_TOOLS.copy()
+    tools = copy.deepcopy(ALL_TOOLS)
     if use_community_tools:
         try:
             from community.config.tools import COMMUNITY_TOOLS
 
-            tools = ALL_TOOLS.copy()
-            tools.update(COMMUNITY_TOOLS)
+            tools = copy.deepcopy(ALL_TOOLS)
+            community_tools = copy.deepcopy(COMMUNITY_TOOLS)
+            tools.update(community_tools)
         except ImportError:
             logger.warning(
                 event="[Tools] Error loading tools: Community tools not available."

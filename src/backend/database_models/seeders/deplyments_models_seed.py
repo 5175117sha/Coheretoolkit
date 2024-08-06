@@ -1,6 +1,8 @@
+import json
 import os
 
 from dotenv import load_dotenv
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.config.deployments import ALL_MODEL_DEPLOYMENTS, ModelDeploymentName
@@ -12,11 +14,9 @@ from backend.database_models import (
     Organization,
     User,
 )
+from backend.schemas.agent import DEFAULT_AGENT_ID, DEFAULT_AGENT_NAME
 from community.config.deployments import (
     AVAILABLE_MODEL_DEPLOYMENTS as COMMUNITY_DEPLOYMENTS_SETUP,
-)
-from community.config.deployments import (
-    ModelDeploymentName as CommunityModelDeploymentsName,
 )
 
 load_dotenv()
@@ -121,34 +121,43 @@ def deployments_models_seed(op):
     session.commit()
     default_organization.users.append(default_user)
     session.commit()
-
-    default_agent = Agent(
-        id="default",
-        version=1,
-        name="Command R+",
-        description="Default agent",
-        preamble="",
-        temperature=0.3,
-        tools=[
-            "web_search",
-            "search_file",
-            "read_document",
-            "toolkit_python_interpreter",
-            "toolkit_calculator",
-            "wikipedia",
-            "google_drive",
-            "arxiv",
-            "example_connector",
-            "pub_med",
-            "file_reader_llamaindex",
-            "wolfram_alpha",
-            "clinical_trials",
-        ],
+    tools = [
+        "web_search",
+        "search_file",
+        "read_document",
+        "toolkit_python_interpreter",
+        "toolkit_calculator",
+        "wikipedia",
+        "google_drive",
+        "arxiv",
+        "example_connector",
+        "pub_med",
+        "file_reader_llamaindex",
+        "wolfram_alpha",
+        "clinical_trials",
+    ]
+    tools_json = json.dumps(tools)
+    sql_command = text(
+        """
+        INSERT INTO agents (
+            id, version, name, description, preamble, temperature, tools, 
+            user_id, organization_id, created_at, updated_at
+        )
+        VALUES (
+            :id, 1, :name, 'Default agent', '', 0.3, :tools, :user_id, 
+            :organization_id, now(), now()
+        )
+        ON CONFLICT (id) DO NOTHING;
+    """
+    ).bindparams(
+        id=DEFAULT_AGENT_ID,
+        name=DEFAULT_AGENT_NAME,
+        tools=tools_json,
         user_id=default_user.id,
         organization_id=default_organization.id,
     )
-    session.add(default_agent)
-    session.commit()
+
+    op.execute(sql_command)
 
     # Seed deployments and models
     for deployment in MODELS_NAME_MAPPING.keys():
@@ -180,7 +189,7 @@ def deployments_models_seed(op):
 
         agent_deployment_association = AgentDeploymentModel(
             deployment_id=new_deployment.id,
-            agent_id=default_agent.id,
+            agent_id=DEFAULT_AGENT_ID,
             model_id=model_to_agent_id,
             deployment_config={
                 env_var: os.environ.get(env_var, "")
