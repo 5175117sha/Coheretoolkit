@@ -464,10 +464,10 @@ class CompassClient:
         """
 
         @retry(
-            stop=stop_after_attempt(max_retries),
-            wait=wait_fixed(sleep_retry_seconds),
-            retry=retry_if_not_exception_type((CompassAuthError, InvalidSchema)),
-        )
+                stop=stop_after_attempt(max_retries),
+                wait=wait_fixed(sleep_retry_seconds),
+                retry=retry_if_not_exception_type((CompassAuthError, InvalidSchema)),
+            )
         def _send_request_with_retry():
             nonlocal error
             try:
@@ -496,7 +496,7 @@ class CompassClient:
                     error = "Unauthorized. Please check your username and password."
                     raise CompassAuthError()
                 else:
-                    error = str(e) + " " + e.response.text
+                    error = f"{str(e)} {e.response.text}"
                     logger.error(
                         f"[Thread {threading.get_native_id()}] Failed to send request to "
                         f"{function} {target_path}: {type(e)} {error}. Going to sleep for "

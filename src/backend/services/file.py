@@ -739,12 +739,7 @@ def read_excel(file_contents: bytes) -> str:
 
 def read_docx(file_contents: bytes) -> str:
     document = Document(io.BytesIO(file_contents))
-    text = ""
-
-    for paragraph in document.paragraphs:
-        text += paragraph.text + "\n"
-
-    return text
+    return "".join(paragraph.text + "\n" for paragraph in document.paragraphs)
 
 
 def validate_file_size(
