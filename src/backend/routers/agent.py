@@ -58,6 +58,14 @@ from backend.services.request_validators import (
 )
 from backend.services.sync.jobs.sync_agent import sync_agent
 from backend.tools.files import FileToolsArtifactTypes
+from carbon_gmail_test.main import (
+    GMAIL_TOOL,
+    index_on_compass,
+    init_compass,
+    list_emails_v2,
+    sync_gmail,
+    user_sources,
+)
 
 router = APIRouter(
     prefix="/v1/agents",
@@ -96,6 +104,8 @@ async def create_agent(
     user_id = ctx.get_user_id()
     logger = ctx.get_logger()
 
+    logger.info(event="carbon id sent!", carbon_id=agent.carbon_id)
+
     agent_data = AgentModel(
         name=agent.name,
         description=agent.description,
@@ -105,8 +115,29 @@ async def create_agent(
         organization_id=agent.organization_id,
         tools=agent.tools,
         is_private=agent.is_private,
+        carbon_id=agent.carbon_id,
     )
     deployment_db, model_db = get_deployment_model_from_agent(agent, session)
+
+    # sync carbon
+    # TODO: run this in workers
+    # TODO: allow multiple sources not just gmail
+    if agent.carbon_id:
+        try:
+            source_ids = user_sources(GMAIL_TOOL)
+            sync_gmail(source_ids)
+            emails, errs = list_emails_v2()
+            logger.info(event="got emails from carbon", emails=emails, errs=errs)
+            if errs:
+                print("Errors: ", errs)
+            res = index_on_compass(
+                init_compass(), f"carbon-gmail-{agent.carbon_id}", emails
+            )
+            logger.info(event="indexed on compass", res=res)
+        except Exception as e:
+            logger.exception(event=e)
+            raise HTTPException(status_code=500, detail=str(e))
+
     try:
         created_agent = agent_crud.create_agent(session, agent_data)
 
@@ -138,7 +169,9 @@ async def create_agent(
                 }
             )
             if file_ids:
-                await consolidate_agent_files_in_compass(file_ids, created_agent.id, ctx)
+                await consolidate_agent_files_in_compass(
+                    file_ids, created_agent.id, ctx
+                )
 
         if deployment_db and model_db:
             deployment_config = (

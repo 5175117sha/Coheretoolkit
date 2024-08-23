@@ -1,6 +1,26 @@
+.PHONY: local-dev
+local-dev:
+	@docker compose up -d --build db redis
+	make -j 2 local-dev-be local-dev-fe
+
+.PHONY: local-dev-be
+local-dev-be:
+	poetry run uvicorn backend.main:app --reload
+.PHONY: local-dev-fe
+local-dev-fe:
+	cd src/interfaces/assistants_web && npm run dev
+
+.PHONY: local-migration
+local-migration:
+	poetry run alembic -c src/backend/alembic.ini revision --autogenerate -m ""
+
+local-migrate:
+	poetry run alembic -c src/backend/alembic.ini upgrade head
+
+
 .PHONY: dev
 dev:
-	make -j 2 watch up
+	make -j 2 up
 
 .PHONY: watch
 watch:
@@ -123,3 +143,21 @@ test-db:
 .PHONY: dev-sync
 dev-sync:
 	@docker compose up --build sync_worker sync_publisher flower -d
+
+
+.PHONY: dev-sync-down
+dev-sync-down:
+	@docker compose down sync_worker sync_publisher flower
+
+
+.PHONY: typecheck
+typecheck:
+	poetry run pyright
+
+
+carbon-webhook-server:
+	poetry run fastapi dev  src/carbon_gmail_test/webhook_server.py
+
+
+gmail-sandbox-app:
+	python src/carbon_gmail_test/main.py  
